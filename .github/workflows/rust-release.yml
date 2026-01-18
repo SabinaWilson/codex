@@ -246,19 +246,9 @@ jobs:
           path: |
             codex-rs/dist/${{ matrix.target }}/*
 
-  shell-tool-mcp:
-    name: shell-tool-mcp
-    needs: tag-check
-    uses: ./.github/workflows/shell-tool-mcp.yml
-    with:
-      release-tag: ${{ github.ref_name }}
-      publish: true
-    secrets: inherit
-
   release:
     needs:
       - build
-      - shell-tool-mcp
     name: release
     runs-on: ubuntu-latest
     permissions:
@@ -300,14 +290,6 @@ jobs:
 
       - name: List
         run: ls -R dist/
-
-      # This is a temporary fix: we should modify shell-tool-mcp.yml so these
-      # files do not end up in dist/ in the first place.
-      - name: Delete entries from dist/ that should not go in the release
-        run: |
-          rm -rf dist/shell-tool-mcp*
-
-          ls -R dist/
 
       - name: Define release name
         id: release_name
@@ -360,9 +342,7 @@ jobs:
         run: |
           ./scripts/stage_npm_packages.py \
             --release-version "${{ steps.release_name.outputs.name }}" \
-            --package codex \
-            --package codex-responses-api-proxy \
-            --package codex-sdk
+            --package codex
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -419,16 +399,7 @@ jobs:
             --repo "${GITHUB_REPOSITORY}" \
             --pattern "codex-npm-${version}.tgz" \
             --dir dist/npm
-          gh release download "$tag" \
-            --repo "${GITHUB_REPOSITORY}" \
-            --pattern "codex-responses-api-proxy-npm-${version}.tgz" \
-            --dir dist/npm
-          gh release download "$tag" \
-            --repo "${GITHUB_REPOSITORY}" \
-            --pattern "codex-sdk-npm-${version}.tgz" \
-            --dir dist/npm
 
-      # No NODE_AUTH_TOKEN needed because we use OIDC.
       - name: Publish to npm
         env:
           VERSION: ${{ needs.release.outputs.version }}
@@ -439,16 +410,7 @@ jobs:
           if [[ -n "${NPM_TAG}" ]]; then
             tag_args+=(--tag "${NPM_TAG}")
           fi
-
-          tarballs=(
-            "codex-npm-${VERSION}.tgz"
-            "codex-responses-api-proxy-npm-${VERSION}.tgz"
-            "codex-sdk-npm-${VERSION}.tgz"
-          )
-
-          for tarball in "${tarballs[@]}"; do
-            npm publish "${GITHUB_WORKSPACE}/dist/npm/${tarball}" "${tag_args[@]}"
-          done
+          npm publish "${GITHUB_WORKSPACE}/dist/npm/codex-npm-${VERSION}.tgz" "${tag_args[@]}"
 
   update-branch:
     name: Update latest-alpha-cli branch

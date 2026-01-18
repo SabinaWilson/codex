@@ -288,7 +288,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build (shell-tool-mcp)
-        run: pnpm --filter @openai/codex-shell-tool-mcp run build
+        run: pnpm --filter @cometix/codex-shell-tool-mcp run build
 
       - name: Download build artifacts
         uses: actions/download-artifact@v7
@@ -380,7 +380,7 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           registry-url: https://registry.npmjs.org
-          scope: "@openai"
+          scope: "@cometix"
 
       - name: Update npm
         run: npm install -g npm@latest
