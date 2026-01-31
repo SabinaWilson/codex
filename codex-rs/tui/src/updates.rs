@@ -1,7 +1,5 @@
 #![cfg(not(debug_assertions))]
 
-use crate::update_action;
-use crate::update_action::UpdateAction;
 use chrono::DateTime;
 use chrono::Duration;
 use chrono::Utc;
@@ -13,6 +11,12 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use crate::version::CODEX_CLI_VERSION;
+
+/// The npm package name for version checking.
+pub const NPM_PACKAGE_NAME: &str = "@cometix/codex";
+
+/// The GitHub repository for release notes.
+pub const GITHUB_REPO: &str = "Haleclipse/codex";
 
 pub fn get_upgrade_version(config: &Config) -> Option<String> {
     if !config.check_for_update_on_startup {
@@ -27,7 +31,7 @@ pub fn get_upgrade_version(config: &Config) -> Option<String> {
         Some(info) => info.last_checked_at < Utc::now() - Duration::hours(20),
     } {
         // Refresh the cached latest version in the background so TUI startup
-        // isn’t blocked by a network call. The UI reads the previously cached
+        // isn't blocked by a network call. The UI reads the previously cached
         // value (if any) for this run; the next run shows the banner if needed.
         tokio::spawn(async move {
             check_for_update(&version_file)
@@ -55,14 +59,20 @@ struct VersionInfo {
 }
 
 const VERSION_FILENAME: &str = "version.json";
-// We use the latest version from the cask if installation is via homebrew - homebrew does not immediately pick up the latest release and can lag behind.
-const HOMEBREW_CASK_URL: &str =
-    "https://raw.githubusercontent.com/Homebrew/homebrew-cask/HEAD/Casks/c/codex.rb";
-const LATEST_RELEASE_URL: &str = "https://api.github.com/repos/openai/codex/releases/latest";
+
+/// npm registry API endpoint for package metadata.
+const NPM_REGISTRY_URL: &str = "https://registry.npmjs.org/@cometix/codex";
+
+/// Response structure from npm registry API (only fields we need).
+#[derive(Deserialize, Debug, Clone)]
+struct NpmPackageInfo {
+    #[serde(rename = "dist-tags")]
+    dist_tags: NpmDistTags,
+}
 
 #[derive(Deserialize, Debug, Clone)]
-struct ReleaseInfo {
-    tag_name: String,
+struct NpmDistTags {
+    latest: String,
 }
 
 fn version_filepath(config: &Config) -> PathBuf {
@@ -75,30 +85,16 @@ fn read_version_info(version_file: &Path) -> anyhow::Result<VersionInfo> {
 }
 
 async fn check_for_update(version_file: &Path) -> anyhow::Result<()> {
-    let latest_version = match update_action::get_update_action() {
-        Some(UpdateAction::BrewUpgrade) => {
-            let cask_contents = create_client()
-                .get(HOMEBREW_CASK_URL)
-                .send()
-                .await?
-                .error_for_status()?
-                .text()
-                .await?;
-            extract_version_from_cask(&cask_contents)?
-        }
-        _ => {
-            let ReleaseInfo {
-                tag_name: latest_tag_name,
-            } = create_client()
-                .get(LATEST_RELEASE_URL)
-                .send()
-                .await?
-                .error_for_status()?
-                .json::<ReleaseInfo>()
-                .await?;
-            extract_version_from_latest_tag(&latest_tag_name)?
-        }
-    };
+    // Fetch latest version from npm registry
+    let npm_info: NpmPackageInfo = create_client()
+        .get(NPM_REGISTRY_URL)
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+
+    let latest_version = npm_info.dist_tags.latest;
 
     // Preserve any previously dismissed version if present.
     let prev_info = read_version_info(version_file).ok();
@@ -123,23 +119,16 @@ fn is_newer(latest: &str, current: &str) -> Option<bool> {
     }
 }
 
-fn extract_version_from_cask(cask_contents: &str) -> anyhow::Result<String> {
-    cask_contents
-        .lines()
-        .find_map(|line| {
-            let line = line.trim();
-            line.strip_prefix("version \"")
-                .and_then(|rest| rest.strip_suffix('"'))
-                .map(ToString::to_string)
-        })
-        .ok_or_else(|| anyhow::anyhow!("Failed to find version in Homebrew cask file"))
-}
+fn parse_version(v: &str) -> Option<(u64, u64, u64)> {
+    // Strip any suffix like "-cometix" before parsing
+    let v = v.trim();
+    let v = v.split('-').next().unwrap_or(v);
 
-fn extract_version_from_latest_tag(latest_tag_name: &str) -> anyhow::Result<String> {
-    latest_tag_name
-        .strip_prefix("rust-v")
-        .map(str::to_owned)
-        .ok_or_else(|| anyhow::anyhow!("Failed to parse latest tag name '{latest_tag_name}'"))
+    let mut iter = v.split('.');
+    let maj = iter.next()?.parse::<u64>().ok()?;
+    let min = iter.next()?.parse::<u64>().ok()?;
+    let pat = iter.next()?.parse::<u64>().ok()?;
+    Some((maj, min, pat))
 }
 
 /// Returns the latest version to show in a popup, if it should be shown.
@@ -177,49 +166,9 @@ pub async fn dismiss_version(config: &Config, version: &str) -> anyhow::Result<(
     Ok(())
 }
 
-fn parse_version(v: &str) -> Option<(u64, u64, u64)> {
-    let mut iter = v.trim().split('.');
-    let maj = iter.next()?.parse::<u64>().ok()?;
-    let min = iter.next()?.parse::<u64>().ok()?;
-    let pat = iter.next()?.parse::<u64>().ok()?;
-    Some((maj, min, pat))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn parses_version_from_cask_contents() {
-        let cask = r#"
-            cask "codex" do
-              version "0.55.0"
-            end
-        "#;
-        assert_eq!(
-            extract_version_from_cask(cask).expect("failed to parse version"),
-            "0.55.0"
-        );
-    }
-
-    #[test]
-    fn extracts_version_from_latest_tag() {
-        assert_eq!(
-            extract_version_from_latest_tag("rust-v1.5.0").expect("failed to parse version"),
-            "1.5.0"
-        );
-    }
-
-    #[test]
-    fn latest_tag_without_prefix_is_invalid() {
-        assert!(extract_version_from_latest_tag("v1.5.0").is_err());
-    }
-
-    #[test]
-    fn prerelease_version_is_not_considered_newer() {
-        assert_eq!(is_newer("0.11.0-beta.1", "0.11.0"), None);
-        assert_eq!(is_newer("1.0.0-rc.1", "1.0.0"), None);
-    }
 
     #[test]
     fn plain_semver_comparisons_work() {
@@ -230,8 +179,22 @@ mod tests {
     }
 
     #[test]
+    fn cometix_suffix_is_stripped_for_comparison() {
+        assert_eq!(is_newer("0.93.0-cometix", "0.92.0"), Some(true));
+        assert_eq!(is_newer("0.93.0", "0.92.0-cometix"), Some(true));
+        assert_eq!(is_newer("0.93.0-cometix", "0.93.0"), Some(false));
+    }
+
+    #[test]
     fn whitespace_is_ignored() {
         assert_eq!(parse_version(" 1.2.3 \n"), Some((1, 2, 3)));
         assert_eq!(is_newer(" 1.2.3 ", "1.2.2"), Some(true));
+    }
+
+    #[test]
+    fn prerelease_versions_compare_by_base() {
+        // With the new logic, -cometix is stripped, so these compare equal
+        assert_eq!(is_newer("0.93.0-cometix", "0.93.0-cometix"), Some(false));
+        assert_eq!(parse_version("0.93.0-cometix"), Some((0, 93, 0)));
     }
 }
