@@ -103,6 +103,8 @@ mod style;
 mod terminal_palette;
 mod text_formatting;
 mod tooltips;
+pub mod translate_overlay;
+pub mod translation;
 mod tui;
 mod ui_consts;
 pub mod update_action;

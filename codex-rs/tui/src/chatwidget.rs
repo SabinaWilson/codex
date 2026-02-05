@@ -525,6 +525,8 @@ pub(crate) struct ChatWidget {
     reasoning_buffer: String,
     // Accumulates full reasoning content for transcript-only recording
     full_reasoning_buffer: String,
+    // Orchestrator for agent reasoning translation
+    agent_reasoning_translation: crate::translation::ReasoningTranslator,
     // Current status header shown in the status indicator.
     current_status_header: String,
     // Previous status header to restore after a transient stream retry.
@@ -586,6 +588,8 @@ pub(crate) struct ChatWidget {
     // Current session rollout path (if known)
     current_rollout_path: Option<PathBuf>,
     external_editor_state: ExternalEditorState,
+    // Translation configuration
+    translation_config: crate::translation::TranslationConfig,
 }
 
 /// Snapshot of active-cell state that affects transcript overlay rendering.
@@ -1010,7 +1014,14 @@ impl ChatWidget {
         if !self.full_reasoning_buffer.is_empty() {
             let cell =
                 history_cell::new_reasoning_summary_block(self.full_reasoning_buffer.clone());
-            self.add_boxed_history(cell);
+            // Use orchestrator to emit cell with translation hook
+            self.agent_reasoning_translation
+                .emit_history_cell_with_translation_hook(
+                    &self.app_event_tx,
+                    self.thread_id,
+                    self.frame_requester.clone(),
+                    cell,
+                );
         }
         self.reasoning_buffer.clear();
         self.full_reasoning_buffer.clear();
@@ -2381,6 +2392,7 @@ impl ChatWidget {
             interrupts: InterruptManager::new(),
             reasoning_buffer: String::new(),
             full_reasoning_buffer: String::new(),
+            agent_reasoning_translation: crate::translation::ReasoningTranslator::default(),
             current_status_header: String::from("Working"),
             retry_status_header: None,
             thread_id: None,
@@ -2406,11 +2418,17 @@ impl ChatWidget {
             feedback_audience,
             current_rollout_path: None,
             external_editor_state: ExternalEditorState::Closed,
+            translation_config: crate::translation::TranslationConfig::load(),
         };
 
         // 初始化状态栏数据
         widget.update_statusline_data();
         widget.start_statusline_git_poller();
+
+        // Sync translation orchestrator with loaded config
+        widget
+            .agent_reasoning_translation
+            .update_config(widget.translation_config.clone());
 
         widget.prefetch_rate_limits();
         widget
@@ -2531,6 +2549,7 @@ impl ChatWidget {
             interrupts: InterruptManager::new(),
             reasoning_buffer: String::new(),
             full_reasoning_buffer: String::new(),
+            agent_reasoning_translation: crate::translation::ReasoningTranslator::default(),
             current_status_header: String::from("Working"),
             retry_status_header: None,
             thread_id: None,
@@ -2557,7 +2576,13 @@ impl ChatWidget {
             current_rollout_path: None,
             external_editor_state: ExternalEditorState::Closed,
             statusline_git_poller: None,
+            translation_config: crate::translation::TranslationConfig::load(),
         };
+
+        // Sync translation orchestrator with loaded config
+        widget
+            .agent_reasoning_translation
+            .update_config(widget.translation_config.clone());
 
         widget.prefetch_rate_limits();
         widget
@@ -2668,6 +2693,7 @@ impl ChatWidget {
             interrupts: InterruptManager::new(),
             reasoning_buffer: String::new(),
             full_reasoning_buffer: String::new(),
+            agent_reasoning_translation: crate::translation::ReasoningTranslator::default(),
             current_status_header: String::from("Working"),
             retry_status_header: None,
             thread_id: None,
@@ -2693,11 +2719,17 @@ impl ChatWidget {
             feedback_audience,
             current_rollout_path: None,
             external_editor_state: ExternalEditorState::Closed,
+            translation_config: crate::translation::TranslationConfig::load(),
         };
 
         // 初始化状态栏数据
         widget.update_statusline_data();
         widget.start_statusline_git_poller();
+
+        // Sync translation orchestrator with loaded config
+        widget
+            .agent_reasoning_translation
+            .update_config(widget.translation_config.clone());
 
         widget.prefetch_rate_limits();
         widget
@@ -3054,6 +3086,9 @@ impl ChatWidget {
             SlashCommand::Cxline => {
                 self.app_event_tx.send(AppEvent::OpenCxlineConfig);
             }
+            SlashCommand::Translate => {
+                self.app_event_tx.send(AppEvent::OpenTranslateConfig);
+            }
             SlashCommand::Quit | SlashCommand::Exit => {
                 self.request_quit_without_confirmation();
             }
@@ -3295,6 +3330,17 @@ impl ChatWidget {
         }
     }
 
+    /// Process translation results and timeouts on each draw tick.
+    /// Returns true if a redraw is needed.
+    pub(crate) fn translation_draw_tick(&mut self) -> bool {
+        let result = self.agent_reasoning_translation.on_draw_tick(
+            self.thread_id,
+            &self.app_event_tx,
+            self.frame_requester.clone(),
+        );
+        result.needs_redraw
+    }
+
     fn flush_active_cell(&mut self) {
         if let Some(active) = self.active_cell.take() {
             self.needs_final_message_separator = true;
@@ -3320,7 +3366,9 @@ impl ChatWidget {
             self.flush_active_cell();
             self.needs_final_message_separator = true;
         }
-        self.app_event_tx.send(AppEvent::InsertHistoryCell(cell));
+        // Route through orchestrator to respect translation barrier
+        self.agent_reasoning_translation
+            .emit_history_cell(&self.app_event_tx, cell);
     }
 
     fn queue_user_message(&mut self, user_message: UserMessage) {
@@ -5316,6 +5364,19 @@ impl ChatWidget {
 
     pub(crate) fn set_statusline_git_preview(&mut self, preview: GitPreviewData) {
         self.bottom_pane.set_statusline_git_preview(preview);
+    }
+
+    /// Get the current translation config.
+    pub(crate) fn get_translation_config(&self) -> crate::translation::TranslationConfig {
+        self.translation_config.clone()
+    }
+
+    /// Set the translation config and sync orchestrator state.
+    pub(crate) fn set_translation_config(&mut self, config: crate::translation::TranslationConfig) {
+        // Sync full config with orchestrator
+        self.agent_reasoning_translation
+            .update_config(config.clone());
+        self.translation_config = config;
     }
 
     /// Set the sandbox policy in the widget's config copy.
