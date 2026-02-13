@@ -112,20 +112,6 @@ jobs:
           echo "${cargo_home}/bin" >> "$GITHUB_PATH"
           : > "${cargo_home}/config.toml"
 
-      - uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            ${{ github.workspace }}/.cargo-home/bin/
-            ${{ github.workspace }}/.cargo-home/registry/index/
-            ${{ github.workspace }}/.cargo-home/registry/cache/
-            ${{ github.workspace }}/.cargo-home/git/db/
-            ${{ github.workspace }}/codex-rs/target/
-          key: cargo-${{ matrix.runner }}-${{ matrix.target }}-release-${{ hashFiles('**/Cargo.lock') }}
-
       - if: ${{ matrix.target == 'x86_64-unknown-linux-musl' || matrix.target == 'aarch64-unknown-linux-musl'}}
         name: Install Zig
         uses: mlugg/setup-zig@v2
@@ -189,6 +175,15 @@ jobs:
           cxxflags="$(sanitize_flags "${CXXFLAGS-}")"
           echo "CFLAGS=${cflags}" >> "$GITHUB_ENV"
           echo "CXXFLAGS=${cxxflags}" >> "$GITHUB_ENV"
+
+      # Ensure the cross-compile target is present on the *active* toolchain.
+      # dtolnay/rust-toolchain@1.93 installs with --profile minimal, but
+      # cargo's first invocation may trigger rustup to sync a different
+      # patch release (e.g. 1.93.1 vs 1.93.0) using the default profile,
+      # which only includes the host rust-std and drops the cross target.
+      - name: Ensure cross-compile target is present
+        shell: bash
+        run: rustup target add ${{ matrix.target }}
 
       - name: Cargo build
         shell: bash
