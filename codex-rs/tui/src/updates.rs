@@ -12,12 +12,6 @@ use std::path::PathBuf;
 
 use crate::version::CODEX_CLI_VERSION;
 
-/// The npm package name for version checking.
-pub const NPM_PACKAGE_NAME: &str = "@cometix/codex";
-
-/// The GitHub repository for release notes.
-pub const GITHUB_REPO: &str = "Haleclipse/codex";
-
 pub fn get_upgrade_version(config: &Config) -> Option<String> {
     if !config.check_for_update_on_startup {
         return None;
