@@ -156,13 +156,13 @@ use crate::render::Insets;
 use crate::render::RectExt;
 use crate::render::renderable::Renderable;
 use crate::slash_command::SlashCommand;
-use codex_common::fuzzy_match::fuzzy_match;
 use codex_protocol::custom_prompts::CustomPrompt;
 use codex_protocol::custom_prompts::PROMPTS_CMD_PREFIX;
 use codex_protocol::models::local_image_label_text;
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::user_input::ByteRange;
 use codex_protocol::user_input::TextElement;
+use codex_utils_fuzzy_match::fuzzy_match;
 
 use crate::app_event::AppEvent;
 use crate::app_event::ConnectorsSnapshot;
